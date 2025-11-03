@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Membership Classifier</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
             margin: 0;
@@ -268,29 +269,45 @@
             background: #f8f9fa;
         }
 
-        .model-info {
-            background: #e8f0fe;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            margin-bottom: 30px;
+        .category-detail {
+            background: white;
+            padding: 20px;
             border-radius: 8px;
-            font-size: 0.95em;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
         }
 
-        .model-info strong {
-            color: #667eea;
+        .category-detail:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
         }
+
+        .category-detail h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .category-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .category-item:last-child {
+            border-bottom: none;
+        }
+
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>💰 Membership Classifier</h1>
+            <h1>💰 Membership Manager</h1>
             <p>Track and analyze your recurring subscriptions and memberships</p>
-        </div>
-
-        <div id="modelInfo" class="model-info">
-            Loading model information...
         </div>
 
         <div class="card">
@@ -323,10 +340,6 @@
                     <div class="stat-label">Total Memberships</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value" id="totalSpending">$0</div>
-                    <div class="stat-label">Total Spending</div>
-                </div>
-                <div class="stat-card">
                     <div class="stat-value" id="monthlyEstimate">$0</div>
                     <div class="stat-label">Monthly Estimate</div>
                 </div>
@@ -334,12 +347,17 @@
         </div>
 
         <div class="card summary-section">
-            <h2>Expenses by Type</h2>
-            <div id="summary"></div>
+            <h2>Spending by Category</h2>
+            <div style="display: flex; gap: 30px; align-items: flex-start;">
+                <div style="flex: 1; max-width: 400px;">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+                <div style="flex: 1;" id="categoryDetails"></div>
+            </div>
         </div>
 
         <div class="card">
-            <h2>Recent Transactions</h2>
+            <h2>All Transactions</h2>
             <div id="transactions"></div>
         </div>
     </div>
@@ -429,6 +447,8 @@
             ]);
         }
 
+        let categoryChart = null;
+
         async function loadSummary() {
             try {
                 const response = await fetch('/api/summary');
@@ -436,67 +456,246 @@
 
                 // Update stats
                 document.getElementById('totalMemberships').textContent = summaryData.total_memberships || 0;
-                document.getElementById('totalSpending').textContent = 
-                    `$${summaryData.total_membership_spending.toFixed(2)}`;
                 document.getElementById('monthlyEstimate').textContent = 
                     `$${summaryData.total_monthly_estimate.toFixed(2)}`;
 
-                // Display summary
-                const summaryDiv = document.getElementById('summary');
-                
-                if (!summaryData.by_type || Object.keys(summaryData.by_type).length === 0) {
-                    summaryDiv.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">📊</div>
-                            <p>No membership data yet. Upload a bank statement or email to get started!</p>
-                        </div>
-                    `;
+                // Check if we have data
+                if (!summaryData.by_category || Object.keys(summaryData.by_category).length === 0) {
+                    document.getElementById('categoryChart').parentElement.innerHTML = 
+                        '<p class="empty-state">No membership data yet. Upload a bank statement to get started!</p>';
+                    document.getElementById('categoryDetails').innerHTML = '';
                     return;
                 }
 
-                let html = '';
+                // Create pie chart by category
+                createCategoryChart(summaryData.by_category);
                 
-                for (const [type, data] of Object.entries(summaryData.by_type)) {
-                    html += `
-                        <div class="type-group">
-                            <div class="type-header">
-                                ${type} - $${data.total.toFixed(2)} (${data.count} transactions)
-                            </div>
-                            <div class="category-list">
-                    `;
+                // Display breakdown by type then categories
+                displayCategoryDetails(summaryData.by_type, summaryData.by_category);
+            } catch (error) {
+                console.error('Error loading summary:', error);
+            }
+        }
 
-                    // Get categories for this type
-                    const categories = Object.entries(summaryData.by_category)
-                        .filter(([_, catData]) => catData.membership_type === type)
-                        .sort((a, b) => b[1].total - a[1].total);
+        function createCategoryChart(categoryData) {
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            
+            const categories = Object.entries(categoryData)
+                .sort((a, b) => b[1].monthly_estimate - a[1].monthly_estimate);
+            
+            const labels = categories.map(([cat, _]) => cat);
+            const amounts = categories.map(([_, data]) => data.monthly_estimate);
+            
+            // Destroy previous chart if exists
+            if (categoryChart) {
+                categoryChart.destroy();
+            }
 
-                    for (const [category, catData] of categories) {
-                        html += `
-                            <div class="category-item">
-                                <div class="category-info">
-                                    <div class="category-name">${category}</div>
-                                    <div class="category-details">
-                                        ${catData.frequency || 'Unknown frequency'} • ${catData.count} payment${catData.count !== 1 ? 's' : ''}
-                                    </div>
-                                </div>
-                                <div class="category-amount">
-                                    <div class="amount-main">$${catData.total.toFixed(2)}</div>
-                                    <div class="amount-sub">~$${catData.monthly_estimate.toFixed(2)}/month</div>
-                                </div>
-                            </div>
-                        `;
+            const colors = [
+                '#667eea',
+                '#f093fb',
+                '#4facfe',
+                '#43e97b',
+                '#fa709a',
+                '#fee140',
+                '#30cfd0'
+            ];
+
+            categoryChart = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: amounts,
+                        backgroundColor: colors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const cat = context.label;
+                                    const data = categoryData[cat];
+                                    return `${cat}: $${data.monthly_estimate.toFixed(2)}/month`;
+                                }
+                            }
+                        }
                     }
+                }
+            });
+        }
 
+        function displayCategoryDetails(byTypeData, byCategoryData) {
+            const detailsDiv = document.getElementById('categoryDetails');
+            
+            const colors = {
+                'Sport': '#667eea',
+                'Streaming': '#f093fb',
+                'Software': '#4facfe',
+                'News': '#43e97b',
+                'Services': '#fa709a',
+                'Other': '#fee140'
+            };
+            
+            let html = '<h3 style="margin-bottom: 15px;">Breakdown by Type</h3>';
+            
+            // Sort types by total
+            const types = Object.entries(byTypeData)
+                .sort((a, b) => b[1].total - a[1].total);
+            
+            for (const [type, typeData] of types) {
+                const typeColor = colors[type] || '#30cfd0';
+                html += `
+                    <div class="type-group" style="margin-bottom: 20px;">
+                        <div class="type-header collapsed" 
+                             data-type="${type}"
+                             style="background: ${typeColor}; color: white; padding: 12px; border-radius: 8px 8px 0 0; font-weight: bold; display: flex; justify-content: space-between; cursor: pointer; transition: all 0.2s;"
+                             onclick="toggleTypeGroup('${type}')">
+                            <span>${type}</span>
+                            <span>$${typeData.monthly_estimate.toFixed(2)}/month</span>
+                        </div>
+                        <div class="type-content" data-type-content="${type}" style="display: none; background: white; border: 2px solid ${typeColor}; border-top: none; border-radius: 0 0 8px 8px; padding: 15px;">
+                `;
+                
+                // Get categories for this type
+                const categories = Object.entries(byCategoryData)
+                    .filter(([cat, catData]) => catData.membership_type === type)
+                    .sort((a, b) => b[1].total - a[1].total);
+                
+                for (const [category, catData] of categories) {
                     html += `
+                        <div class="category-detail collapsed" 
+                             data-category="${category}"
+                             style="border-left: 4px solid ${typeColor}; margin-bottom: 10px;"
+                             onclick="toggleCategoryDetails('${category}')">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <h4 style="margin: 0; color: ${typeColor}; font-size: 1.1em;">${category}</h4>
+                                <span style="font-weight: bold; color: ${typeColor};">$${catData.monthly_estimate.toFixed(2)}/month</span>
+                            </div>
+                            <div class="category-full-details" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
+                                <div class="category-item">
+                                    <span>Frequency:</span>
+                                    <span>${catData.frequency || 'Unknown'}</span>
+                                </div>
+                                <div class="category-item">
+                                    <span>Total Paid:</span>
+                                    <span><strong>$${catData.total.toFixed(2)}</strong></span>
+                                </div>
+                                <div class="category-item">
+                                    <span>Payments:</span>
+                                    <span>${catData.count}</span>
+                                </div>
+                                <button onclick="event.stopPropagation(); showCategoryModal('${category}')" 
+                                        style="margin-top: 10px; padding: 8px 15px; background: ${typeColor}; color: white; border: none; border-radius: 6px; cursor: pointer; width: 100%;">
+                                    View All Transactions
+                                </button>
                             </div>
                         </div>
                     `;
                 }
-
-                summaryDiv.innerHTML = html;
-            } catch (error) {
-                console.error('Error loading summary:', error);
+                
+                html += `
+                        </div>
+                    </div>
+                `;
             }
+            
+            detailsDiv.innerHTML = html;
+        }
+
+        function toggleTypeGroup(type) {
+            const typeHeader = document.querySelector(`[data-type="${type}"]`);
+            const typeContent = document.querySelector(`[data-type-content="${type}"]`);
+            const isCollapsed = typeHeader.classList.contains('collapsed');
+            
+            if (isCollapsed) {
+                typeContent.style.display = 'block';
+                typeHeader.style.borderRadius = '8px 8px 0 0';
+                typeHeader.classList.remove('collapsed');
+            } else {
+                typeContent.style.display = 'none';
+                typeHeader.style.borderRadius = '8px';
+                typeHeader.classList.add('collapsed');
+            }
+        }
+
+        function toggleCategoryDetails(category) {
+            const detailDiv = document.querySelector(`[data-category="${category}"]`);
+            const fullDetails = detailDiv.querySelector('.category-full-details');
+            const isCollapsed = detailDiv.classList.contains('collapsed');
+            
+            if (isCollapsed) {
+                fullDetails.style.display = 'block';
+                detailDiv.classList.remove('collapsed');
+            } else {
+                fullDetails.style.display = 'none';
+                detailDiv.classList.add('collapsed');
+            }
+        }
+
+        function showCategoryModal(category) {
+            // Get transactions for this category
+            const transactions = summaryData.by_category[category].transactions || [];
+            const data = summaryData.by_category[category];
+            
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.5); display: flex; align-items: center;
+                justify-content: center; z-index: 1000; padding: 20px;
+            `;
+            
+            modal.innerHTML = `
+                <div style="background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 100%; max-height: 80vh; overflow-y: auto;">
+                    <h2 style="margin-bottom: 20px; color: #667eea;">${category}</h2>
+                    <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <p><strong>Type:</strong> ${data.membership_type || 'Unknown'}</p>
+                        <p><strong>Frequency:</strong> ${data.frequency || 'Unknown'}</p>
+                        <p><strong>Total Paid:</strong> $${data.total.toFixed(2)}</p>
+                        <p><strong>Monthly Cost:</strong> $${data.monthly_estimate.toFixed(2)}</p>
+                    </div>
+                    <h3 style="margin-bottom: 15px;">Transactions</h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f8f9fa;">
+                                <th style="padding: 10px; text-align: left;">Date</th>
+                                <th style="padding: 10px; text-align: right;">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${transactions.map(t => `
+                                <tr>
+                                    <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                                        ${new Date(t.date).toLocaleDateString()}
+                                    </td>
+                                    <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">
+                                        $${parseFloat(t.amount).toFixed(2)}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <button onclick="this.closest('div').parentElement.remove()" 
+                            style="margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer;">
+                        Close
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Close on outside click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
         }
 
         async function loadTransactions() {
@@ -554,32 +753,7 @@
             }
         }
 
-        async function loadModelInfo() {
-            try {
-                const response = await fetch('/api/model-info');
-                const info = await response.json();
-                
-                const modelInfoDiv = document.getElementById('modelInfo');
-                if (info.use_ai) {
-                    modelInfoDiv.innerHTML = `
-                        <strong>AI Model:</strong> ${info.model_type} - ${info.model_name}<br>
-                        <em>Using AI-powered classification</em>
-                    `;
-                } else {
-                    modelInfoDiv.innerHTML = `
-                        <strong>Model:</strong> ${info.model_type} (${info.model_name})<br>
-                        <em>Fast pattern-based classification</em>
-                    `;
-                }
-            } catch (error) {
-                console.error('Error loading model info:', error);
-                document.getElementById('modelInfo').innerHTML = 
-                    '<strong>Model:</strong> Rule-based (Pattern Matching)';
-            }
-        }
-
         // Load data on page load
-        loadModelInfo();
         refreshData();
     </script>
 </body>

@@ -259,7 +259,14 @@ class BankStatementParser:
             return float(amount_str)
 
         # Remove currency symbols and commas
-        cleaned = str(amount_str).replace("$", "").replace(",", "").strip()
+        cleaned = (
+            str(amount_str)
+            .replace("$", "")
+            .replace("€", "")
+            .replace("£", "")
+            .replace(",", "")
+            .strip()
+        )
 
         try:
             return float(cleaned)

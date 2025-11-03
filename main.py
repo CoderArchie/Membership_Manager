@@ -255,12 +255,22 @@ async def get_summary(db: Session = Depends(get_db)):
                 "count": 0,
                 "frequency": t.frequency,
                 "membership_type": mtype,
+                "transactions": [],
             }
 
         by_category[category]["total"] += t.amount
         by_category[category]["count"] += 1
 
-    # Calculate monthly estimates
+        # Add transaction details
+        by_category[category]["transactions"].append(
+            {
+                "date": t.date.isoformat(),
+                "amount": t.amount,
+                "merchant": t.merchant,
+            }
+        )
+
+    # Calculate monthly estimates for categories
     for category, data in by_category.items():
         frequency = data.get("frequency", "Monthly")
         if frequency == "Monthly":
@@ -277,6 +287,14 @@ async def get_summary(db: Session = Depends(get_db)):
             )
         else:
             data["monthly_estimate"] = 0
+
+    # Calculate monthly estimates for types
+    for mtype, typeData in by_type.items():
+        typeData["monthly_estimate"] = sum(
+            by_category[cat]["monthly_estimate"]
+            for cat in by_category
+            if by_category[cat]["membership_type"] == mtype
+        )
 
     # Calculate totals
     total_membership_spending = sum(t.amount for t in memberships)
